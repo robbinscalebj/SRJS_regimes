@@ -1,0 +1,76 @@
+---
+title: "Regime shifts paper"
+date: "5/13/2020"
+output: pdf_document
+---
+
+# Data preparation
+
+Imports required packages for the analysis.
+```{r, message=FALSE}
+require(tidyverse)
+require(zoo) # for rolling avg function
+```
+
+
+The SRJS algae and ancillary environmental data comes in long format, which is imported below. 
+```{r}
+algae_master <- read.csv(file = "../Data/algae_spp_all.csv", 
+                         header = T, 
+                         sep = ",")
+
+ancillary_master <- read.csv(file = "../Data/Master_SRJS_Query.csv", 
+                             header = T, 
+                             sep = ",") %>%
+  mutate(TP.ug.L = TP..mg.L.*1000) %>%
+  group_by(Site_ID) %>%
+  mutate(TP.rolling = rollapply(data = TP.ug.L,
+                                width = 4, # 4 specifies 6-mo window
+                                FUN = mean,
+                                partial = TRUE,
+                                na.rm = TRUE,
+                                fill = NA,
+                                align = "right"),
+         TN.rolling = rollapply(data = TN..mg.L.,
+                                width = 4, # 4 specifies 6-mo window
+                                FUN = mean,
+                                partial = TRUE,
+                                na.rm = TRUE,
+                                fill = NA,
+                                align = "right")) %>%
+  #################################################################
+  # Excludes sampling events we do not have algal taxonomy data for
+  # WILL NEED TO CHANGE BASED ON ANALYSIS!
+  #################################################################
+  filter(Event != 0) %>%
+  filter(Event != 10) %>%
+  filter(Event != 11.5)
+```
+
+The environmental data frame houses more variables that are needed for this analysis, so I compute summary stats on the environmental variables of interest, as well as convert total phosphorus concentrations to $\mu$g/L for plotting purposes.
+
+```{r, message=FALSE}
+query_summary <- ancillary_master %>% 
+  group_by(Site_ID) %>% 
+  select(Q_CFS:TN.rolling) %>% # select which ENV variables to run summarise_each on
+  summarise_all(funs(mean(., na.rm = TRUE), 
+                      min(., na.rm = TRUE), 
+                      max(., na.rm = TRUE),
+                      sd(., na.rm = TRUE),
+                      median(., na.rm = TRUE),
+                      IQR(., na.rm = TRUE)))
+
+
+query_summary$Site_ID <- reorder(query_summary$Site_ID, query_summary$TP..mg.L._mean)
+```
+
+Below gets the algae taxonomy data into wide format.
+
+```{r}
+alg_wide <- algae_master %>%
+  select(Event, Site_ID, ShortName, Biovolume_mm3_m2) %>%
+  group_by(Site_ID, Event, ShortName) %>%
+  summarise(Biovolume_mm3_m2 = sum(Biovolume_mm3_m2)) %>%
+  spread(ShortName, Biovolume_mm3_m2, fill = 0)
+```
+
