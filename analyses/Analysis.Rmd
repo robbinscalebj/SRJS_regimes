@@ -9,23 +9,161 @@ knitr::opts_chunk$set(echo = TRUE)
 
 library(here)
 library(tidyverse)
+library(mgcv)
+library(marginaleffects)
+library(TITAN2)
 
 ```
 
 
 ```{r}
-env_df <- read_csv(here("data/Master_SRJS_Query.csv"))|>
-  filter(Event != 0)
 
-inv_df <- read_csv(here())
+
+alg_df <- read_csv(here("data/alg_df_resolved.csv"))
+
+alg_wide <- alg_df|>
+  select(Event, Site_ID, ShortName, Biovolume_mm3_m2)|>
+  group_by(Site_ID, Event, ShortName)|>
+  summarise(Biovolume_mm3_m2 = sum(Biovolume_mm3_m2, na.rm = TRUE))|>ungroup()|>
+  pivot_wider(names_from = ShortName, values_from = Biovolume_mm3_m2, values_fill = 0)
+
+clad_df<-alg_wide|>
+  pivot_longer(-c(Site_ID, Event), names_to = "ShortName", values_to = "Biovolume_mm3_m2")|>
+  left_join(alg_names)|>
+  filter(str_detect(Species, "Clad"))
+  
+alg_names <- alg_df|>distinct(ShortName, Species)
+
+inv_df <- read_csv(here("data/SRJS_inverts.csv"))
 
 sites <- read_csv(here("data/SRJS_sites.csv"))
 
 
-```
 
+env_df <- read_csv(here("data/Master_SRJS_Query.csv"))|>
+  filter(Event != 0)|>left_join(clad_df)|>
+  mutate(TP_ug.L = 1000*`TP (mg/L)`,
+         TN_ug.L = 1000*`TN (mg/L)`,
+         TNTP_molar = TN_ug.L/TP_ug.L *31/14)|>
+  rename(Chla_mg.m2 = `CHLA mg/m2`)|>
+  mutate(Event = as_factor(Event))|>
+  group_by(Site_ID)|>
+  summarize(across(c(TP_ug.L, TN_ug.L, Chla_mg.m2, Biovolume_mm3_m2), ~median(., na.rm = TRUE)))|>
+  mutate(TNTP_molar = TN_ug.L/TP_ug.L *31/14)|>
+  rename(clad_biovol = "Biovolume_mm3_m2")
+```
+Exploratory Viz
+```{r}
+ggplot(data = env_df, aes(x = TP_ug.L))+geom_histogram()
+ggplot(data = env_df, aes(x = TN_ug.L))+geom_histogram()
+ggplot(data = env_df, aes(x = TNTP_molar))+geom_histogram()
+ggplot(data = env_df, aes(x = TP_ug.L, y = TN_ug.L))+geom_point()+
+  #scale_y_log10()+scale_x_log10()+
+  geom_smooth(method = "lm")+geom_abline(slope = 1)
+
+ggplot(data = env_df, aes(x = TP_ug.L, y = TNTP_molar))+geom_point()+geom_smooth() # most basic assumption would be that as TP increases, N:P decreases, but that's OPPOSITE of what's going on at the low end of the TP gradient - as TP increases, TN is increasing even more quickly
+
+ggplot(data = env_df, aes(x = TP_ug.L, y = Chla_mg.m2))+geom_point()+geom_smooth(method = "gam")
+ggplot(data = env_df, aes(x = TN_ug.L, y = Chla_mg.m2))+geom_point()+geom_smooth(method = "gam")
+ggplot(data = env_df, aes(x = TNTP_molar, y = Chla_mg.m2))+geom_point()+geom_smooth(method = "gam")
+
+ggplot(data = env_df, aes(x = clad_biovol, y = Chla_mg.m2))+geom_point()+geom_smooth(method = "gam")
+ggplot(data = env_df, aes(x = log(clad_biovol), y = Chla_mg.m2))+geom_point()+geom_smooth(method = "gam")
+
+
+ggplot(data = env_df, aes(x = TN_ug.L, y = clad_biovol))+geom_point()+geom_smooth(method = "gam")
+ggplot(data = env_df, aes(x = TP_ug.L, y = clad_biovol))+geom_point()+geom_smooth(method = "gam")
+
+```
 # Site Map
+
+LOTS of site details/summaries can be found in Cook, Stephen C., et al. 2018. Freshwater eutrophication drives sharp reductions in temporal beta diversity. Ecology 99:47-56. https://doi.org/10.1002/ecy.2069.
+
 ```{r}
 
+
+```
+
+# GAM
+Want to test relationships:
+1) Chla ~ TP + TN
+2) Chla ~ Cladophora
+3) Cladophora ~ TP + TN
+```{r model fitting}
+
+m_n <- gam(data=env_df, Chla_mg.m2 ~ s(TN_ug.L), family = Gamma(link = "log"), method = "REML")
+m_p <- gam(data=env_df, Chla_mg.m2 ~ s(TP_ug.L), family = Gamma(link = "log"), method = "REML")
+m_np <- gam(data=env_df, Chla_mg.m2 ~ TP_ug.L + TN_ug.L + s(TP_ug.L) +s(TN_ug.L), family = Gamma(link = "log"), method = "REML")
+
+
+m_np_te <- gam(data=env_df, Chla_mg.m2 ~ te(TP_ug.L, TN_ug.L), family = Gamma(link = "log"), method = "REML")
+
+newdata_df <- tibble(TN_ug.L = c(rep(100, times = 100),rep(200, times = 100),rep(1000, times = 100),rep(2000, times = 100)),
+                     TP_ug.L = rep(seq(5,125, length.out = 100), times = 4))
+
+
+plot_predictions(m_n, condition = "TN_ug.L", points = 0.5)
+plot_predictions(m_p, condition = "TP_ug.L", points = 0.5)
+plot_predictions(m_np, condition = "TN_ug.L", points = 0.5)
+plot_predictions(m_np, condition = "TP_ug.L", points = 0.5)
+
+m_np_preds<-predictions(m_np, newdata = newdata_df)|>
+  mutate(TN_ug.L = as_factor(TN_ug.L))
+
+ggplot(data = m_np_preds)+
+  geom_line(data = m_np_preds, aes(x = TP_ug.L, y = estimate, color = TN_ug.L))+
+  geom_line(data = m_np_preds,aes(x = TP_ug.L, y = conf.high, color = TN_ug.L), linetype = "dashed")+
+  geom_line(data = m_np_preds,aes(x = TP_ug.L, y = conf.low, color = TN_ug.L), linetype = "dashed")+
+  geom_point(data = env_df, aes(x = TP_ug.L, y = Chla_mg.m2))+
+  #facet_wrap(.~TN_ug.L)+
+  theme_bw()
+
+
+plot_predictions(m_np, condition = "TN_ug.L", points = 0.5)
+plot_predictions(m_np, condition = "TP_ug.L", points = 0.5)
+
+```
+
+```{r model fitting}
+env_df2 <- env_df|>
+  mutate(clad_biovol = ifelse(clad_biovol == 0, clad_biovol+1, clad_biovol))
+m_n <- gam(data=env_df2, clad_biovol ~ s(TN_ug.L), family = Gamma(link = "log"), method = "REML")
+m_p <- gam(data=env_df2, clad_biovol ~ s(TP_ug.L), family = Gamma(link = "log"), method = "REML")
+m_np <- gam(data=env_df2, clad_biovol ~ TP_ug.L + TN_ug.L + s(TP_ug.L) +s(TN_ug.L), family = Gamma(link = "log"), method = "REML")
+
+
+m_np_te <- gam(data=env_df2, clad_biovol ~ te(TP_ug.L, TN_ug.L), family = Gamma(link = "log"), method = "REML")
+
+newdata_df <- tibble(TN_ug.L = c(rep(100, times = 100),rep(200, times = 100),rep(1000, times = 100),rep(2000, times = 100)),
+                     TP_ug.L = rep(seq(5,125, length.out = 100), times = 4))
+
+
+plot_predictions(m_n, condition = "TN_ug.L", points = 0.5)
+plot_predictions(m_p, condition = "TP_ug.L", points = 0.5)
+plot_predictions(m_np, condition = "TN_ug.L", points = 0.5)
+plot_predictions(m_np, condition = "TP_ug.L", points = 0.5)
+
+m_np_preds<-predictions(m_np, newdata = newdata_df)|>
+  mutate(TN_ug.L = as_factor(TN_ug.L))
+
+ggplot(data = m_np_preds)+
+  geom_line(data = m_np_preds, aes(x = TP_ug.L, y = estimate, color = TN_ug.L))+
+  geom_line(data = m_np_preds,aes(x = TP_ug.L, y = conf.high, color = TN_ug.L), linetype = "dashed")+
+  geom_line(data = m_np_preds,aes(x = TP_ug.L, y = conf.low, color = TN_ug.L), linetype = "dashed")+
+  geom_point(data = env_df2, aes(x = TP_ug.L, y = clad_biovol))+
+  #facet_wrap(.~TN_ug.L)+
+  theme_bw()
+
+
+plot_predictions(m_np, condition = "TN_ug.L", points = 0.5)
+plot_predictions(m_np, condition = "TP_ug.L", points = 0.5)
+
+```
+
+
+# Algal TITAN
+
+
+# Invert TITAN
 
 
