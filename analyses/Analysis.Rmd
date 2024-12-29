@@ -20,6 +20,7 @@ library(TITAN2)
 
 
 alg_df <- read_csv(here("data/alg_df_resolved.csv"))
+alg_names <- alg_df|>distinct(ShortName, Species)
 
 alg_wide <- alg_df|>
   select(Event, Site_ID, ShortName, Biovolume_mm3_m2)|>
@@ -32,7 +33,7 @@ clad_df<-alg_wide|>
   left_join(alg_names)|>
   filter(str_detect(Species, "Clad"))
   
-alg_names <- alg_df|>distinct(ShortName, Species)
+
 
 inv_df <- read_csv(here("data/SRJS_inverts.csv"))
 
@@ -40,23 +41,25 @@ sites <- read_csv(here("data/SRJS_sites.csv"))
 
 
 
-env_df <- read_csv(here("data/Master_SRJS_Query.csv"))|>
+env_df1 <- read_csv(here("data/Master_SRJS_Query.csv"))|>
   filter(Event != 0)|>left_join(clad_df)|>
   mutate(TP_ug.L = 1000*`TP (mg/L)`,
          TN_ug.L = 1000*`TN (mg/L)`,
          TNTP_molar = TN_ug.L/TP_ug.L *31/14)|>
-  rename(Chla_mg.m2 = `CHLA mg/m2`)|>
-  mutate(Event = as_factor(Event))|>
+  rename(Chla_mg.m2 = `CHLA mg/m2`, NP_bulk = `NP bulk`,clad_biovol = "Biovolume_mm3_m2")
+
+env_df <- env_df1|>
   group_by(Site_ID)|>
-  summarize(across(c(TP_ug.L, TN_ug.L, Chla_mg.m2, Biovolume_mm3_m2), ~median(., na.rm = TRUE)))|>
+  summarize(across(c(NP_bulk, TP_ug.L, TN_ug.L, Chla_mg.m2, clad_biovol), ~median(., na.rm = TRUE)))|>
   mutate(TNTP_molar = TN_ug.L/TP_ug.L *31/14)|>
-  rename(clad_biovol = "Biovolume_mm3_m2")
+  rename()
 ```
 Exploratory Viz
 ```{r}
 ggplot(data = env_df, aes(x = TP_ug.L))+geom_histogram()
 ggplot(data = env_df, aes(x = TN_ug.L))+geom_histogram()
-ggplot(data = env_df, aes(x = TNTP_molar))+geom_histogram()
+ggplot(data = env_df, aes(x = TNTP_molar))+geom_histogram()+scale_x_continuous(breaks = c(0,10,25,50,100,150,200))
+ggplot(data = env_df, aes(x = TNTP_molar, y=NP_bulk, color = clad_biovol, size = clad_biovol))+geom_point()+scale_x_continuous(breaks = c(0,10,25,50,100,150,200))
 ggplot(data = env_df, aes(x = TP_ug.L, y = TN_ug.L))+geom_point()+
   #scale_y_log10()+scale_x_log10()+
   geom_smooth(method = "lm")+geom_abline(slope = 1)
@@ -65,6 +68,7 @@ ggplot(data = env_df, aes(x = TP_ug.L, y = TNTP_molar))+geom_point()+geom_smooth
 
 ggplot(data = env_df, aes(x = TP_ug.L, y = Chla_mg.m2))+geom_point()+geom_smooth(method = "gam")
 ggplot(data = env_df, aes(x = TN_ug.L, y = Chla_mg.m2))+geom_point()+geom_smooth(method = "gam")
+ggplot(data = env_df, aes(x = NP_bulk, y = Chla_mg.m2, color = clad_biovol, size = clad_biovol))+geom_point()+geom_smooth(method = "gam")
 ggplot(data = env_df, aes(x = TNTP_molar, y = Chla_mg.m2))+geom_point()+geom_smooth(method = "gam")
 
 ggplot(data = env_df, aes(x = clad_biovol, y = Chla_mg.m2))+geom_point()+geom_smooth(method = "gam")
@@ -93,19 +97,26 @@ Want to test relationships:
 
 m_n <- gam(data=env_df, Chla_mg.m2 ~ s(TN_ug.L), family = Gamma(link = "log"), method = "REML")
 m_p <- gam(data=env_df, Chla_mg.m2 ~ s(TP_ug.L), family = Gamma(link = "log"), method = "REML")
-m_np <- gam(data=env_df, Chla_mg.m2 ~ TP_ug.L + TN_ug.L + s(TP_ug.L) +s(TN_ug.L), family = Gamma(link = "log"), method = "REML")
+m_np <- gam(data=env_df, Chla_mg.m2 ~ s(TP_ug.L) +s(TN_ug.L), family = Gamma(link = "log"), method = "REML")
+
+m_np2 <- gam(data=env_df, Chla_mg.m2 ~  s(TP_ug.L)+s(TN_ug.L) + s(TNTP_molar), family = Gamma(link = "log"), method = "REML")
+
+m_np3 <- gam(data=env_df, Chla_mg.m2 ~ s(TNTP_molar), family = Gamma(link = "log"), method = "REML")
 
 
 m_np_te <- gam(data=env_df, Chla_mg.m2 ~ te(TP_ug.L, TN_ug.L), family = Gamma(link = "log"), method = "REML")
 
 newdata_df <- tibble(TN_ug.L = c(rep(100, times = 100),rep(200, times = 100),rep(1000, times = 100),rep(2000, times = 100)),
-                     TP_ug.L = rep(seq(5,125, length.out = 100), times = 4))
+                     TP_ug.L = rep(seq(5,125, length.out = 100), times = 4),
+                     TNTP_molar = rep(seq(20,150, length.out = 100), times = 4))
 
 
 plot_predictions(m_n, condition = "TN_ug.L", points = 0.5)
 plot_predictions(m_p, condition = "TP_ug.L", points = 0.5)
 plot_predictions(m_np, condition = "TN_ug.L", points = 0.5)
 plot_predictions(m_np, condition = "TP_ug.L", points = 0.5)
+
+plot_predictions(m_np3, condition = "TNTP_molar", points = 0.5)
 
 m_np_preds<-predictions(m_np, newdata = newdata_df)|>
   mutate(TN_ug.L = as_factor(TN_ug.L))
@@ -166,4 +177,34 @@ plot_predictions(m_np, condition = "TP_ug.L", points = 0.5)
 
 # Invert TITAN
 
+```{r prep data}
+inv_com_df <- inv_df|>
+  pivot_longer(-c(1,2), names_to = "taxon", values_to = "count")|>
+  mutate(present = ifelse(count >0, 1,0))|>
+  group_by(taxon)|>
+  mutate(taxon_present_sum = sum(present))|>
+  filter(taxon_present_sum>3)|> # drop taxa that are present less than 3 times
+  select(-present,-taxon_present_sum)|>
+  pivot_wider(values_from = count, names_from = taxon)|> #pivot wider again for species/site matrix
+  left_join(env_df1|>select(Site_ID, Event, TP_ug.L, TN_ug.L, clad_biovol))
+```
 
+
+```{r run titan}
+inv_com_df2 <- inv_com_df|>select(-Site_ID, -Event,-TP_ug.L, -TN_ug.L, -clad_biovol)
+titan_tp <- titan(env = inv_com_df$TP_ug.L, txa = inv_com_df2, ncpus = 4)
+titan_tn <- titan(env = inv_com_df$TN_ug.L, txa = inv_com_df2, ncpus = 4)
+
+```
+
+```{r}
+
+titan_df <- tit_obj$sppmax|>as_tibble(rownames = "taxon")
+titan_df2 <- tit_obj2$sppmax|>as_tibble(rownames = "taxon")
+head(titan_df)
+
+plot_taxa_ridges(tit_obj_yr,
+xlabel = "Year")
+
+plot_sumz_density(tit_obj2, ribbon = FALSE, sumz = TRUE, change_points = FALSE)
+```
