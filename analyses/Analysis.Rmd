@@ -59,6 +59,17 @@ Exploratory Viz
 ggplot(data = env_df, aes(x = TP_ug.L))+geom_histogram()
 ggplot(data = env_df, aes(x = TN_ug.L))+geom_histogram()
 ggplot(data = env_df, aes(x = TNTP_molar))+geom_histogram()+scale_x_continuous(breaks = c(0,10,25,50,100,150,200))
+
+ggplot(data = env_df|>mutate(Site_ID = fct_reorder(Site_ID, TP_ug.L, desc)), aes(x = Site_ID, y = TP_ug.L))+geom_point()+theme(axis.text = element_text(angle = 90))+
+  scale_y_continuous(breaks = c(0,5,10,20,30,60,90,110))
+
+ggplot(data = env_df1|>mutate(Site_ID = fct_reorder(Site_ID, TP_ug.L, ~desc(mean(., na.rm = TRUE)))), aes(x = Site_ID, y = TP_ug.L))+geom_point()+theme(axis.text = element_text(angle = 90))+scale_y_log10(breaks =  c(2.5, 5,7.5,10,30,100,300))
+  scale_y_continuous(breaks = c(0,5,10,20,30,60,90,110))
+
+ggplot(data = env_df|>mutate(Site_ID = fct_reorder(Site_ID, TN_ug.L, desc)), aes(x = Site_ID, y = TN_ug.L))+geom_point()+theme(axis.text = element_text(angle = 90))+
+  scale_y_continuous(breaks = c(0,250,1000,2000,3000,4000,5000))
+
+
 ggplot(data = env_df, aes(x = TNTP_molar, y=NP_bulk, color = clad_biovol, size = clad_biovol))+geom_point()+scale_x_continuous(breaks = c(0,10,25,50,100,150,200))
 ggplot(data = env_df, aes(x = TP_ug.L, y = TN_ug.L))+geom_point()+
   #scale_y_log10()+scale_x_log10()+
@@ -75,10 +86,29 @@ ggplot(data = env_df, aes(x = clad_biovol, y = Chla_mg.m2))+geom_point()+geom_sm
 ggplot(data = env_df, aes(x = log(clad_biovol), y = Chla_mg.m2))+geom_point()+geom_smooth(method = "gam")
 
 
-ggplot(data = env_df, aes(x = TN_ug.L, y = clad_biovol))+geom_point()+geom_smooth(method = "gam")
-ggplot(data = env_df, aes(x = TP_ug.L, y = clad_biovol))+geom_point()+geom_smooth(method = "gam")
+ggplot(data = env_df, aes(x = TN_ug.L, y = clad_biovol, size = TP_ug.L))+geom_point()+geom_smooth(method = "gam")
+ggplot(data = env_df1, aes(x = TP_ug.L, y = clad_biovol, color = TEMP))+geom_point()+geom_smooth(method = "gam")+
+  scale_x_continuous(limits = c(0,150))+
+  facet_wrap(.~Event, scales = "free_y")
 
 ```
+
+Visualize richness trends
+```{r}
+rich_df <- inv_df|>
+  rowwise()|>
+  mutate(Richness = sum(c_across(-c(Site_ID, Event)) > 0))|>
+  select(Site_ID, Event, Richness)|>
+  left_join(env_df)
+
+ggplot(data = rich_df, aes(x = log(TP_ug.L), y = Richness, group = Event))+geom_point()+geom_smooth()+
+  facet_wrap(.~Event)
+
+ggplot(data = rich_df, aes(x = log(clad_biovol+10), y = Richness, group = Event))+geom_point()+geom_smooth()+
+  facet_wrap(.~Event)
+
+```
+
 # Site Map
 
 LOTS of site details/summaries can be found in Cook, Stephen C., et al. 2018. Freshwater eutrophication drives sharp reductions in temporal beta diversity. Ecology 99:47-56. https://doi.org/10.1002/ecy.2069.
@@ -175,7 +205,7 @@ plot_predictions(m_np, condition = "TP_ug.L", points = 0.5)
 # Algal TITAN
 
 
-# Invert TITAN
+# Invert 
 
 ```{r prep data}
 inv_com_df <- inv_df|>
@@ -183,28 +213,152 @@ inv_com_df <- inv_df|>
   mutate(present = ifelse(count >0, 1,0))|>
   group_by(taxon)|>
   mutate(taxon_present_sum = sum(present))|>
-  filter(taxon_present_sum>3)|> # drop taxa that are present less than 3 times
+  filter(taxon_present_sum>5)|> # drop taxa that are present less than 5 times
+  select(-present,-taxon_present_sum)|>
+  pivot_wider(values_from = count, names_from = taxon)|> #pivot wider again for species/site matrix
+  left_join(env_df1|>select(Site_ID, Event, TP_ug.L, TN_ug.L, clad_biovol))
+
+inv_com_df2 <- inv_df|>
+  filter(!Site_ID %in% c("LLEE1", "LEE1", "MTFK1", "COVE"))|>
+  pivot_longer(-c(1,2), names_to = "taxon", values_to = "count")|>
+  mutate(present = ifelse(count >0, 1,0))|>
+  group_by(taxon)|>
+  mutate(taxon_present_sum = sum(present))|>
+  filter(taxon_present_sum>5)|> # drop taxa that are present less than 5 times
   select(-present,-taxon_present_sum)|>
   pivot_wider(values_from = count, names_from = taxon)|> #pivot wider again for species/site matrix
   left_join(env_df1|>select(Site_ID, Event, TP_ug.L, TN_ug.L, clad_biovol))
 ```
+## NMDS
+Are there taxa uniquely associated with Boston mountains sites? Should we drop those from the TITAN analysis? They ar
+
+```{r}
+com <- inv_com_df|>select(-Site_ID, -Event,-TP_ug.L, -TN_ug.L, -clad_biovol)
+sites_tib <- invert_df2|>select(site_date)
+
+```
+
+
+```{r classic distance-based ordination - NMDS}
+
+
+
+mds_com <- metaMDS(com,
+                  distance = "bray", k = 2, trymax = 40)
+#default sqrt trans, wisconsin double standardization
+#converged with k = 2, stresses 0.27
+# k=3 stress ~0.2
+
+com_env <- inv_com_df|>select(Site_ID,Event,TN_ug.L,TP_ug.L)
+
+
+# envfit
+
+com_envfit <- envfit(mds_com ~ TN_ug.L+TP_ug.L, choices=c(1:3),data = com_env, 
+                    permutations = how(nperm = 999), strata = com_env$Event)
+
+
+#Plotting
+
+theme_mds <- theme_bw()+
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+        legend.text = element_text(size = 16), axis.text = element_text(face = "bold", size = 14), axis.title = element_text(size = 18, face = "bold"), plot.title = element_text(size = 18, face = "bold"))
+
+## NMDS1 vs 2
+env_arrows<-(as.data.frame(scores(com_envfit, "vectors")) * ordiArrowMul(com_envfit))|>as_tibble(rownames = "Env_Variable")
+
+species_scores <- scores(mds_com)$species|>as_tibble(rownames = "Chem_Var")
+site_scores <- scores(mds_com)$sites|>as_tibble(rownames = "Site")|>bind_cols(inv_df|>select(Site_ID))
+
+mds_com.p1 <- ggplot()+
+ # ggrepel::geom_text_repel(data = species_scores, aes(x = NMDS1, y = NMDS2, label = Chem_Var), color = "red", max.overlaps = 15)+
+  ggrepel::geom_text_repel(data = site_scores, aes(x = NMDS1, y = NMDS2, label = Site_ID), color = "red", max.overlaps = 15)+
+  ggrepel::geom_text_repel(data = env_arrows, aes(x = NMDS1, y = NMDS2, label = Env_Variable), max.overlaps = 15)+
+ geom_segment(data = env_arrows, aes(x = 0, y = 0, xend = NMDS1, yend = NMDS2), color = "black", arrow = arrow(length = unit(0.3,"cm")), linewidth = 1)+
+  theme_mds+
+  theme(legend.position = c(0.14,0.88), legend.title =element_blank(),legend.box.background = element_rect(colour = "black"))
+
+mds_com.p1
+
+```
+
+## TITAN
+
+
+
 
 
 ```{r run titan}
-inv_com_df2 <- inv_com_df|>select(-Site_ID, -Event,-TP_ug.L, -TN_ug.L, -clad_biovol)
-titan_tp <- titan(env = inv_com_df$TP_ug.L, txa = inv_com_df2, ncpus = 4)
-titan_tn <- titan(env = inv_com_df$TN_ug.L, txa = inv_com_df2, ncpus = 4)
+inv_com_df_taxa <- inv_com_df|>select(-Site_ID, -Event,-TP_ug.L, -TN_ug.L, -clad_biovol)
+
+inv_com_df_taxa2 <- inv_com_df2|>select(-Site_ID, -Event,-TP_ug.L, -TN_ug.L, -clad_biovol)
+
+
+inv_com_dfclad<-inv_com_df|>filter(!is.na(clad_biovol))|>select(-Site_ID, -Event,-TP_ug.L, -TN_ug.L, -clad_biovol)
+inv_cladenv_df <-inv_com_df|>filter(!is.na(clad_biovol))
+
+inv_com_dfclad2 <-inv_com_df2|>filter(!is.na(clad_biovol))|>select(-Site_ID, -Event,-TP_ug.L, -TN_ug.L, -clad_biovol)
+inv_cladenv_df2 <-inv_com_df2|>filter(!is.na(clad_biovol))
+
+# TITAN runs
+
+titan_tp <- titan(env = inv_com_df$TP_ug.L, txa = inv_com_df_taxa, ncpus = 14,nBoot = 999, numPerm = 999)
+saveRDS(titan_tp, here("data/titan_tp.Rds"))
+titan_tn <- titan(env = inv_com_df$TN_ug.L, txa = inv_com_df_taxa, ncpus = 14,nBoot = 999, numPerm = 999)
+saveRDS(titan_tn, here("data/titan_tn.Rds"))
+
+titan_tp2 <- titan(env = inv_com_df2$TP_ug.L, txa = inv_com_df_taxa2, ncpus = 14,nBoot = 999, numPerm = 999)
+saveRDS(titan_tp2, here("data/titan_tp2.Rds"))
+titan_tn2 <- titan(env = inv_com_df2$TN_ug.L, txa = inv_com_df_taxa2, ncpus = 14,nBoot = 999, numPerm = 999)
+saveRDS(titan_tn2, here("data/titan_tn2.Rds"))
+
+titan_clad <- titan(env = inv_cladenv_df$clad_biovol, txa = inv_com_dfclad, ncpus = 14,nBoot = 999, numPerm = 999)
+saveRDS(titan_clad, here("data/titan_clad.Rds"))
+
+titan_clad2 <- titan(env = inv_cladenv_df2$clad_biovol, txa = inv_com_dfclad2, ncpus = 14,nBoot = 999, numPerm = 999)
+saveRDS(titan_clad2, here("data/titan_clad2.Rds"))
+#about 80 minutes for this titan run 
 
 ```
 
 ```{r}
 
-titan_df <- tit_obj$sppmax|>as_tibble(rownames = "taxon")
-titan_df2 <- tit_obj2$sppmax|>as_tibble(rownames = "taxon")
-head(titan_df)
+titan_tp_df <- titan_tp$sppmax|>as_tibble(rownames = "taxon")
+head(titan_tp_df)
 
-plot_taxa_ridges(tit_obj_yr,
-xlabel = "Year")
+plot_taxa(titan_tp,
+xlabel = "TP")
+plot_taxa(titan_tp2,
+xlabel = "TP")
+plot_taxa(titan_tn,
+xlabel = "TN")
+plot_taxa(titan_clad2,
+xlabel = "clad")
 
-plot_sumz_density(tit_obj2, ribbon = FALSE, sumz = TRUE, change_points = FALSE)
+plot_sumz_density(titan_tp, ribbon = FALSE, sumz = TRUE, change_points = TRUE)
+plot_sumz_density(titan_tp2, ribbon = FALSE, sumz = TRUE, change_points = TRUE)
+
+plot_sumz_density(titan_clad2, ribbon = FALSE, sumz = TRUE, change_points = TRUE)
+
+plot_sumz_density(titan_tp, sumz = FALSE)
+plot_sumz_density(titan_tn, sumz = FALSE)
+plot_sumz_density(titan_clad, sumz = FALSE)
+
+plot_sumz_density(titan_clad2, sumz = FALSE)
+
+
+titan_tp$sumz|>
+round(1)
+titan_tp2$sumz|>
+round(1)
+
+titan_tn$sumz|>
+round(1)
+titan_tn2$sumz|>
+round(1)
+
+titan_clad$sumz|>
+  round(3)
+titan_clad2$sumz|>
+  round(3)
 ```
